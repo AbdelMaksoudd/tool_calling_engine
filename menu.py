@@ -23,9 +23,9 @@ def main_menu():
             case "playground":
                 handle_playground_flow()
             case "agent_mode":
-                client = handle_live_agent_flow()
+                client, provider_name= handle_live_agent_flow()
                 if client:
-                    return client  
+                    return client, provider_name
             case "exit" | None:
                 sys.exit("thank you for not wasting my time")
 
@@ -34,7 +34,7 @@ def main_menu():
 
 def handle_playground_flow():
     while True:
-        functions = [function["name"] for function in ToolManager.list]  #function["name"] must be one word
+        functions = [function["tool_details"]["name"] for function in ToolManager.tools]  #function["tool_details"]["name"] must be one word
         choice = questionary.select(
         "Please select the function you would like to try.",
         choices=(
@@ -82,7 +82,7 @@ def handle_live_agent_flow():
                     case "gemini":
                         gemini_object = Gemini(api_key)
                         if gemini_object.validation:
-                            return gemini_object.client
+                            return gemini_object.client ,"gemini"
                         else:
                             print(f"\n[ERROR] Authentication Failed: {gemini_object.msg}\n")
                             questionary.press_any_key_to_continue().ask()

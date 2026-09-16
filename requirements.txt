@@ -1,2 +1,3 @@
 questionary
 google-genai
+pytest

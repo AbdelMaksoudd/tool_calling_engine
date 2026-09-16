@@ -1,10 +1,9 @@
 from google import genai
 class Gemini():
     def __init__(self, api_key):
-        stauts, msg, client = self.validate(api_key)["stauts"],self.validate(api_key)["msg"], self.validate(api_key)["client"]
-        self._validation = stauts
-        self._client = client
-        self._msg = msg
+        res = self.validate(api_key)
+        self._validation, self._msg, self._client = res["stauts"], res["msg"], res["client"]
+        
 
     @property
     def validation(self):
@@ -19,11 +18,11 @@ class Gemini():
         return self._client
 
     def validate(self, api_key: str) -> dict:
-        stauts = False
+        status = False
         try:
             api_key = api_key.strip()
             client = genai.Client(api_key=api_key)
-            models = client.models.list()
+            models = [model.name for model in client.models.list()]
             stauts = True
             msg = "Valid api key"
             return{"stauts": stauts, "msg": msg, "client": client}
