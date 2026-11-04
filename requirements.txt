@@ -1,3 +1,4 @@
 questionary
 google-genai
 pytest
+docstring_parser

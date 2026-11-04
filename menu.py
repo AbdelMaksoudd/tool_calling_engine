@@ -2,7 +2,6 @@ from ToolManager import ToolManager
 from questionary import Choice
 import questionary
 import sys
-from providers.gemini import Gemini
 import warnings
 
 
@@ -23,9 +22,9 @@ def main_menu():
             case "playground":
                 handle_playground_flow()
             case "agent_mode":
-                client, provider_name= handle_live_agent_flow()
-                if client:
-                    return client, provider_name
+                model= handle_live_agent_flow()
+                if model:
+                    return model
             case "exit" | None:
                 sys.exit("thank you for not wasting my time")
 
@@ -34,7 +33,7 @@ def main_menu():
 
 def handle_playground_flow():
     while True:
-        functions = [function["tool_details"]["name"] for function in ToolManager.tools]  #function["tool_details"]["name"] must be one word
+        functions = [tool for tool in ToolManager.tools_dict]  #function["tool_details"]["name"] must be one word
         choice = questionary.select(
         "Please select the function you would like to try.",
         choices=(
@@ -51,45 +50,56 @@ def handle_playground_flow():
 
 def handle_live_agent_flow():
     while True:
-        selected_model = questionary.select(
-            "which AI model you use?",
+
+        selected_provider = questionary.select(
+            "Which AI provider will you use?",
             choices=[
-                Choice("[1] Google Gemini API", value="gemini"),
-                Choice("[2] OpenAI API", value="open_ai", disabled= True),
-                Choice("[3] Anthropic Claude API", value="claude", disabled= True),
-                Choice("[4] Hugging Face Inference API", value="hugging_face", disabled= True),
-                Choice("[5] Groq API", value="groq", disabled= True),
-                Choice("[6] Ollama (locally on your own computer)", value="ollama", disabled= True),
+                Choice("[1] Google Gemini API", value=("gemini/", "gemini-2.5-flash")),
+                Choice("[2] OpenAI API", value=("", "gpt-4o-mini")),
+                Choice("[3] Anthropic Claude API", value=("", "claude-3-haiku-20240307")),
+                Choice("[4] Hugging Face API", value=("huggingface/", "HuggingFaceH4/zephyr-7b-beta")),
+                Choice("[5] Groq API", value=("groq/", "llama3-8b-8192")),                
+                Choice("[6] Ollama (Local)", value=("ollama/", "mistral")),                
                 Choice("[*] Back", value="back"),   
             ]).ask()
 
-
-        match selected_model:
+        match selected_provider:
             case None:
                 sys.exit("thank you for not wasting my time")
             case "back":
-                return
-            case _:
-                try:
-                    api_key = questionary.password("please enter your api key: ").ask()
-                    if (api_key == None) or(type(api_key)==str and api_key.strip() == ""):
-                        sys.exit("thank you for not wasting my time")
+                return None 
+            
+            case (prefix, default_model):
+                
+                model_choice = questionary.select(
+                    "Do you want to use the default model or type a custom one?",
+                    choices=[
+                        Choice(f"Use default: {default_model}", value="default"),
+                        Choice("Type a custom model name", value="custom"),
+                        Choice("Cancel / Go Back", value="back")
+                    ]).ask()
 
-                except KeyboardInterrupt:
+                if model_choice is None:
                     sys.exit("thank you for not wasting my time")
-
-                match selected_model:
-                    case "gemini":
-                        gemini_object = Gemini(api_key)
-                        if gemini_object.validation:
-                            return gemini_object.client ,"gemini"
-                        else:
-                            print(f"\n[ERROR] Authentication Failed: {gemini_object.msg}\n")
-                            questionary.press_any_key_to_continue().ask()
-        
-    
-    
-
+                elif model_choice == "back":
+                    continue
+                
+                final_model = ""
+                
+                if model_choice == "default":
+                    final_model = f"{prefix}{default_model}"
+                else:
+                    custom_model = questionary.text("Enter the custom model name:").ask()
+                    
+                    if custom_model is None:
+                        sys.exit("thank you for not wasting my time")
+                        
+                    if prefix and custom_model.startswith(prefix):
+                        final_model = custom_model
+                    else:
+                        final_model = f"{prefix}{custom_model}"
+                
+                return final_model
 
 if __name__ == "__main__":
     main_menu()
