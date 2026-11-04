@@ -1,35 +1,25 @@
 import inspect
-from typing import Literal, get_args, get_origin
+from typing import get_type_hints, Any
+from pydantic import BaseModel, create_model, Field, ValidationError
+from docstring_parser import parse
+import json
+
+
+class ToolNotFoundError(Exception):
+    pass
+
 class ToolManager():
     
-    json_schema = [
-        {
-            "tool_details": {"type": "function", "name": "name", "description": "description"},
-            "argument_details":{
-                "arguments":{
-                    "arg1": {"type": "type", "description": "description", "enum": [1,2]},
-                    "arg2": {"type": "type", "description": "description", "default": "default"},
-                    "arg3": {"type": "array", "description": "description", "items":{"type": "string"}}        
-                    },
-                "required":["arg1", "arg2", "arg3"]
+    def __init__(self, tool, input_validation, return_annotation, typ, description, name):
+        self._tool = tool
+        self._input_validation = input_validation
+        self.return_annotation = return_annotation
+        self.typ = typ    #-> type
+        self.description = description
+        self.name = name
+        
 
-            }
-
-                         
-         }
-    ]
-
-    map_types = {
-        "int": "integer",
-        "float": "number",
-        "str": "string",
-        "dict": "object",
-        "list": "array",
-        "bool": "boolean"
-    }
-
-    tools = []
-    _functions = {}
+    tools_dict = {}    #[{name: object(ToolManager)}]
 
 
 
@@ -37,75 +27,102 @@ class ToolManager():
     def register(cls, tool):
         if inspect.isclass(tool) or not callable(tool):
             raise TypeError(f"Expected a function, got {type(tool)}")
-        dic = {}
-        dic["tool_details"] = {}
-        dic["argument_details"] = {}
-        dic["tool_details"]["type"] = "function"
-        dic["tool_details"]["name"] = tool.__name__
-        dic["tool_details"]["description"] = inspect.getdoc(tool)
-        args = {}
-        required = []
-        parameters = inspect.signature(tool).parameters
-        for name, param in parameters.items():
-            args[name] = {}
-            
-            if param.annotation != inspect.Parameter.empty:
-                if not(get_origin(param.annotation) is Literal):
-                    if hasattr(param.annotation, "__name__") and param.annotation.__name__ in cls.map_types:
-                        typ = cls.map_types[param.annotation.__name__]
+        
 
-                    else:  
-                        typ =""
+        hints = get_type_hints(tool)
+        return_annotation = hints.pop("return", None)
 
-                else: #object ex: Literal
-                    args[name]["enum"] = list(get_args(param.annotation))
-                    typ = cls.map_types[f"{type(args[name]['enum'][0]).__name__}"]
+        sign = inspect.signature(tool)
+        doc = parse(tool.__doc__ or "")
+        parameters_description = {param.arg_name: param.description for param in doc.params}
 
-            else:
-                typ = "unknown"
+        input_parameters = {}
+        for name, param in sign.parameters.items():
+            if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD): #skip *args, **kwargs
+                continue
+            default = ... if param.default == inspect.Parameter.empty else param.default
+            annotation = hints.get(name, Any)
+            input_parameters[name] = (annotation, Field(default= default, description= parameters_description.get(name, "")))
+        
+        
+        input_validation = create_model(f"{tool.__name__}_schema", **input_parameters)
+        tool_object = ToolManager(
+            input_validation= input_validation,
+            return_annotation= return_annotation,
+            typ = "function",                     #-> type
+            description= f"{doc.short_description}\n{doc.long_description}",
+            tool= tool,
+            name= tool.__name__
+            )
+        
+
+        cls.tools_dict[tool.__name__] = tool_object
+        return tool
+      
 
 
-
-            args[name]["type"] = typ
-            
-            if param.default != inspect.Parameter.empty:
-                args[name]["default"] = param.default
-            else:
-                required.append(name)
-
-        dic["argument_details"]["arguments"] = args
-        dic["argument_details"]["required"] = required
-
-        cls.tools.append(dic)
-        cls._functions[tool.__name__] = tool
 
     
+    @classmethod
+    def get_tools(cls):
+        return [tool for tool in cls.tools_dict]
 
     @classmethod
-    def to_dict(cls): #get_schemas
-        ...
+    def run(cls, tool_name, **kwargs) -> ToolNotFoundError | ValidationError | Any | None:
+        try:
+            tool_object = cls.tools_dict[tool_name] 
+        except Exception:
+            raise ToolNotFoundError(tool_name)
+
+        input_validation = tool_object._input_validation
+        validation = input_validation(**kwargs)
+        
+        
+        return tool_object._tool(**validation.model_dump())
+
 
     @classmethod
-    def tool_names(cls):
-        ...
+    def get_tool_schema(cls, tool_name):
+        try:
+            tool_object = cls.tools_dict[tool_name] 
+        except Exception:
+            raise ToolNotFoundError(tool_name)
+        input_parameters_schema_dict = tool_object._input_validation.model_json_schema().get("properties", None)
+        schema = {
+            "type": tool_object.typ,
+            "function": {
+                "name": tool_object.name,
+                "description": tool_object.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": input_parameters_schema_dict,
+                    "required": [param for param in input_parameters_schema_dict if input_parameters_schema_dict[param].get("default")  == None]
+                              }}}
+        return schema
 
     @classmethod
-    def execute(cls, name: str, **kwargs):
-        if name not in cls._functions:
-            raise ValueError(f"Tool {name} not found")
-        return cls._functions[name](**kwargs)
+    def get_all_schemas(cls):
+        return [cls.get_tool_schema(tool) for tool in cls.tools_dict]
 
-    @classmethod
-    def to_gemini(cls):
-        tools = []
-        for tool in cls.tools:
-            dic = {}
-            dic["type"] = tool["tool_details"]["type"]
-            dic["name"] = tool["tool_details"]["name"]
-            dic["description"] = tool["tool_details"]["description"]
-            dic["parameters"] = {}
-            dic["parameters"] ["type"] = "object"
-            dic["parameters"] ["properties"] = tool["argument_details"]["arguments"]
-            dic["parameters"] ["required"] = tool["argument_details"]["required"]
-            tools.append(dic)
-        return tools 
+
+
+# def calculate_discount(price: float , discount_rate: float = 0, is_member: bool = False) -> float:
+#     """
+#     jjjjjjjjjjjjjjjjjjjjjj
+#     hhhhhhhhhhhhhhhhhhhhhhh
+
+#     :param price: jjjjjjjjjjjj
+#     :param discount_rate: jjjjjjjjjjjjj
+#     :param is_member: jjjjjjjjjjjjjjjjj
+#     :return: jjjjjjjjjjj
+#     """
+#     print("doneeeeeeeeeeeeeee")
+
+# ToolManager.register(calculate_discount)
+
+# objecttt = ToolManager.tools_dict["calculate_discount"]._input_validation(price= 0, discount_rate= 0)
+# print(json.dumps(ToolManager.get_all_schemas(), indent=2))
+
+
+
+# # ToolManager.run("calculate_discount", price=1, discount_rate=1)

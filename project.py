@@ -1,5 +1,7 @@
 from menu import main_menu
-from ToolManager import ToolManager
+from ToolManager import ToolManager, ToolNotFoundError
+from client import stream
+
 from typing import Literal
 import random
 import json
@@ -8,10 +10,41 @@ import subprocess
 import time
 import csv
 import os
-
+from dotenv import load_dotenv
+import getpass
 
 def main():
-    client, provider_name = main_menu()
+    model = main_menu()
+    load_dotenv()
+
+    if model.startswith("gemini/"):
+        if "GEMINI_API_KEY" not in os.environ:
+            os.environ["GEMINI_API_KEY"] = getpass.getpass("Enter your Google Gemini API Key: ")
+
+    elif model.startswith("gpt-") or model.startswith("openai/") or model.startswith("o1"):
+        if "OPENAI_API_KEY" not in os.environ:
+            os.environ["OPENAI_API_KEY"] = getpass.getpass("Enter your OpenAI API Key: ")
+
+    elif model.startswith("claude-") or model.startswith("anthropic/"):
+        if "ANTHROPIC_API_KEY" not in os.environ:
+            os.environ["ANTHROPIC_API_KEY"] = getpass.getpass("Enter your Anthropic API Key: ")
+
+    elif model.startswith("huggingface/"):
+        if "HUGGINGFACE_API_KEY" not in os.environ:
+            os.environ["HUGGINGFACE_API_KEY"] = getpass.getpass("Enter your Hugging Face API Key: ")
+
+    elif model.startswith("groq/"):
+        if "GROQ_API_KEY" not in os.environ:
+            os.environ["GROQ_API_KEY"] = getpass.getpass("Enter your Groq API Key: ")
+
+    elif model.startswith("ollama/"):
+        print("Ollama selected. Running locally, no API key required.")
+
+    else:
+        print(f"Note: Please ensure any required API keys for '{model}' are set in your environment.")
+
+
+
     welcome_message = random.choice([
         "Just stopping by? ",
         "Where should we start? ",
@@ -20,39 +53,26 @@ def main():
         "Let's jump in, what do you want me to do? "
     ])
     prompt = input(welcome_message)
-    match provider_name:
-        case "gemini":
-            interaction = client.interactions.create(
-                model="gemini-2.5-flash",
-                input=prompt,
-                tools=ToolManager.to_gemini()
-            )
+    
 
 
-    function_responses = []
+    
+    messages=[
+            # {"role": "system", "content": ""},
+            {"role": "user", "content": prompt}
+            ]
 
-    for step in interaction.steps:
-        if step.type == "function_call":
-            tool_response = ToolManager.execute(step.name, **step.arguments)
-            
-            function_responses.append({
-                "type": "function_result",
-                "name": step.name,                        
-                "call_id": step.id,
-                "result": json.dumps({"result": tool_response}) 
-            })
+    generator = stream(
+        model=model,
+        messages=messages,
+        tools=ToolManager.get_all_schemas()
+    )
 
-    if function_responses:
-        final_interaction = client.interactions.create(
-            model="gemini-2.5-flash",
-            previous_interaction_id=interaction.id,
-            tools=ToolManager.to_gemini(),                 
-            input=function_responses
-        )
-        print(final_interaction.output_text)
-    else:
-        print(interaction.output_text)
-
+    for chunk in generator:
+        if chunk.get("response_content"):
+            print(chunk["response_content"],  end="", flush=True)
+        elif chunk.get("error_messages"):
+            print(chunk["error_messages"])
 
             
 @ToolManager.register

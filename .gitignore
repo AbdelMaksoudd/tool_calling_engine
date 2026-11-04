@@ -1,3 +1,7 @@
 __pycache__/
 *.py[cod]
 ideas
+.env
+.mypy_cache/
+.pytest_cache
+todo.csv
